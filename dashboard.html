@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>ROS 2 Mobile Dashboard</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; }
+        #video-container { flex: 1; background: #222; display: flex; justify-content: center; align-items: center; }
+        #video-container img { max-width: 100%; max-height: 100%; background: #111; }
+        #joystick-area { height: 50vh; background: #2a2a2a; display: flex; justify-content: center; align-items: center; touch-action: none; }
+        canvas { background: #333; border-radius: 50%; touch-action: none; width: 80vw; height: 80vw; max-width: 350px; max-height: 350px; }
+        #controls { position: absolute; bottom: 20px; right: 20px; display: flex; gap: 10px; }
+        .btn { background: #4CAF50; border: none; color: white; padding: 10px 20px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+    <div id="video-container">
+        <img id="camera-feed" src="" alt="Camera Feed" />
+    </div>
+
+    <div id="joystick-area">
+        <canvas id="joystick" width="400" height="400"></canvas>
+    </div>
+
+    <div id="controls">
+        <button class="btn" id="lidar-toggle">Toggle LiDAR</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.js"></script>
+    <script>
+        // --- Configuration ---
+        const ROSBRIDGE_IP = window.location.hostname; // Uses the IP the page was served from
+        const ROSBRIDGE_PORT = 9090;
+        const CAMERA_TOPIC = '/camera/image_raw/compressed'; // Change if your camera uses a different topic
+
+        // --- ROS Connection ---
+        const ros = new ROSLIB.Ros({
+            url: `ws://${ROSBRIDGE_IP}:${ROSBRIDGE_PORT}`
+        });
+
+        ros.on('connection', () => console.log('Connected to ROS'));
+        ros.on('error', (e) => console.error('ROS Error:', e));
+        ros.on('close', () => console.log('Disconnected'));
+
+        // --- Publishers & Subscribers ---
+        const cmdVelPub = new ROSLIB.Topic({
+            ros: ros,
+            name: '/cmd_vel',
+            messageType: 'geometry_msgs/Twist'
+        });
+
+        // Camera subscriber (shows feed)
+        const cameraSub = new ROSLIB.Topic({
+            ros: ros,
+            name: CAMERA_TOPIC,
+            messageType: 'sensor_msgs/CompressedImage'
+        });
+
+        cameraSub.subscribe((msg) => {
+            const img = document.getElementById('camera-feed');
+            img.src = `data:image/jpeg;base64,${msg.data}`;
+        });
+
+        // --- Virtual Joystick (Canvas) ---
+        const canvas = document.getElementById('joystick');
+        const ctx = canvas.getContext('2d');
+        let active = false;
+        let x = 0, y = 0; // Range -1 to 1
+
+        function drawJoystick() {
+            ctx.clearRect(0, 0, 400, 400);
+            // Outer ring
+            ctx.beginPath();
+            ctx.arc(200, 200, 180, 0, Math.PI * 2);
+            ctx.fillStyle = '#444';
+            ctx.fill();
+            ctx.strokeStyle = '#888';
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            // Inner knob
+            const px = 200 + x * 160;
+            const py = 200 - y * 160; // Invert Y for natural feel
+            ctx.beginPath();
+            ctx.arc(px, py, 40, 0, Math.PI * 2);
+            ctx.fillStyle = '#4CAF50';
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        function publishTwist() {
+            // Map x (left/right) to angular velocity, y (up/down) to linear velocity
+            const linear = Math.max(-1, Math.min(1, -y)); // Pull down -> forward
+            const angular = Math.max(-1, Math.min(1, x));
+            const twist = new ROSLIB.Message({
+                linear: { x: linear * 0.5, y: 0, z: 0 }, // Max 0.5 m/s
+                angular: { x: 0, y: 0, z: angular * 1.0 } // Max 1.0 rad/s
+            });
+            cmdVelPub.publish(twist);
+            document.getElementById('debug').innerHTML = `L: ${linear.toFixed(2)}, A: ${angular.toFixed(2)}`;
+        }
+
+        // Touch Events
+        function handleStart(e) {
+            e.preventDefault();
+            active = true;
+            updateJoystick(e);
+        }
+        function handleMove(e) {
+            e.preventDefault();
+            if (active) updateJoystick(e);
+        }
+        function handleEnd(e) {
+            e.preventDefault();
+            active = false;
+            x = 0; y = 0;
+            drawJoystick();
+            publishTwist(); // Send stop command
+        }
+
+        function updateJoystick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const px = (touch.clientX - rect.left) / rect.width * 400;
+            const py = (touch.clientY - rect.top) / rect.height * 400;
+            // Clamp to circle
+            const dx = (px - 200) / 180;
+            const dy = (py - 200) / 180;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist > 1) { x = dx / dist; y = dy / dist; } else { x = dx; y = dy; }
+            drawJoystick();
+            publishTwist();
+        }
+
+        canvas.addEventListener('touchstart', handleStart);
+        canvas.addEventListener('touchmove', handleMove);
+        canvas.addEventListener('touchend', handleEnd);
+        canvas.addEventListener('touchcancel', handleEnd);
+
+        // --- LiDAR Toggle (Demo / Placeholder) ---
+        document.getElementById('lidar-toggle').addEventListener('click', () => {
+            alert('LiDAR Toggle command sent (you can bind this to a ROS service later)');
+            // Optionally, create a service client here
+        });
+
+        // Initial draw
+        drawJoystick();
+
+        // Debug (optional)
+        const dbg = document.createElement('div');
+        dbg.id = 'debug';
+        dbg.style.cssText = 'position:absolute; bottom:80px; left:20px; color:white; font-size:18px;';
+        document.body.appendChild(dbg);
+    </script>
+</body>
+</html>
