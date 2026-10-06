@@ -3,9 +3,27 @@ build/
 install/
 log/
 
-# Python compiled files
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+.pytest_cache/
 
-# Operating system files
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Colcon
+.colcon_install/
+
+# ROS bag files
+*.bag
+*.db3
+
+# Map files (optional – see note below)
+# maps/*.pgm
+
+# OS
 .DS_Store
+Thumbs.db
